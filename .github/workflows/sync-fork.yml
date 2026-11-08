@@ -47,16 +47,40 @@ jobs:
           git rebase "upstream/${BRANCH}"
           git push --force-with-lease origin "HEAD:${BRANCH}"
 
-      - name: Sync other branches and tags
+      # GITHUB_TOKEN cannot push changes under .github/workflows/ (GitHub App
+      # `workflows` permission is not grantable to GITHUB_TOKEN), so branches
+      # whose tip touches a workflow file are reported as blocked, not failed.
+      - name: Sync other branches
         continue-on-error: true
         run: |
           set -uo pipefail
           git fetch upstream '+refs/heads/*:refs/remotes/upstream/*' --prune
-          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/upstream/); do
-            name="${ref#upstream/}"
-            case "$name" in
-              "$BRANCH"|HEAD) continue ;;
-            esac
-            git push origin "refs/remotes/upstream/${name}:refs/heads/${name}" || echo "skip ${name}"
+          ok=0; blocked=0
+          for ref in $(git for-each-ref --format='%(refname)' refs/remotes/upstream/); do
+            name="${ref#refs/remotes/upstream/}"
+            [ "$name" = "${BRANCH}" ] && continue
+            [ "$name" = "HEAD" ] && continue
+            git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null || { echo "skip ${name} (no such ref)"; continue; }
+            if git push origin "${ref}:refs/heads/${name}"; then
+              ok=$((ok + 1))
+            else
+              blocked=$((blocked + 1)); echo "blocked ${name}"
+            fi
           done
-          git push origin --tags || true
+          echo "branches mirrored=${ok} blocked=${blocked}"
+
+      - name: Sync tags
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          git fetch upstream --tags --prune || true
+          mapfile -t all < <(git tag | sort -V)
+          echo "tags seen: ${#all[@]}"
+          i=0
+          while [ $i -lt ${#all[@]} ]; do
+            chunk=("${all[@]:i:100}")
+            refs=()
+            for t in "${chunk[@]}"; do refs+=("refs/tags/${t}"); done
+            git push origin "${refs[@]}" || echo "chunk at ${i} partially rejected"
+            i=$((i + 100))
+          done
