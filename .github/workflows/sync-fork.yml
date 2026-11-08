@@ -1,7 +1,7 @@
 name: sync-fork
 on:
   schedule:
-    - cron: '17 3 * * *'      # UTC，即北京时间 11:17
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -10,6 +10,9 @@ permissions:
 concurrency:
   group: sync-fork
   cancel-in-progress: false
+
+env:
+  UPSTREAM: "yetone/magpie"
 
 jobs:
   sync:
@@ -20,22 +23,24 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Fetch upstream
+      - name: Sync default branch (fast-forward only)
         run: |
-          git remote add upstream https://github.com/UPSTREAM_OWNER/UPSTREAM_REPO.git
+          set -euo pipefail
+          git remote add upstream "https://github.com/${UPSTREAM}.git"
           git fetch upstream --prune
-
-      - name: Merge (ff-only, 有本地提交则 rebase)
-        run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git merge-base --is-ancestor upstream/main HEAD; then
-            echo "already up to date"; exit 0
-          fi
-          git merge --ff-only upstream/main || {
-            echo "ff-only 失败，改用 rebase"
-            git rebase upstream/main
-            git push --force-with-lease origin HEAD:main
+          if git merge-base --is-ancestor "upstream/main" HEAD; then
+            echo "already up to date"
             exit 0
-          }
-          git push origin HEAD:main
+          fi
+          git merge --ff-only "upstream/main"
+          git push origin "HEAD:main"
+
+      - name: Sync other branches and tags
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          git fetch upstream '+refs/heads/*:refs/remotes/upstream/*' --prune
+          git push origin 'refs/remotes/upstream/*:refs/heads/*' --prune
+          git push origin --tags
