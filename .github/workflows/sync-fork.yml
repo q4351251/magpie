@@ -74,13 +74,19 @@ jobs:
         run: |
           set -uo pipefail
           git fetch upstream --tags --prune || true
-          mapfile -t all < <(git tag | sort -V)
-          echo "tags seen: ${#all[@]}"
+          git ls-remote --tags origin | awk '{print $2}' | sed 's#refs/tags/##; s/\^{}$//' | sort -u > /tmp/have.txt
+          git tag | sort -u > /tmp/all.txt
+          comm -23 /tmp/all.txt /tmp/have.txt > /tmp/missing.txt
+          echo "upstream-tags=$(wc -l < /tmp/all.txt) present=$(wc -l < /tmp/have.txt) missing=$(wc -l < /tmp/missing.txt)"
+          mapfile -t miss < /tmp/missing.txt
           i=0
-          while [ $i -lt ${#all[@]} ]; do
-            chunk=("${all[@]:i:100}")
+          while [ $i -lt ${#miss[@]} ]; do
+            chunk=("${miss[@]:i:30}")
             refs=()
             for t in "${chunk[@]}"; do refs+=("refs/tags/${t}"); done
-            git push origin "${refs[@]}" || echo "chunk at ${i} partially rejected"
-            i=$((i + 100))
+            if ! git push --quiet origin "${refs[@]}"; then
+              sleep 2
+              git push --quiet origin "${refs[@]}" || echo "chunk at ${i}: still rejected, will retry next run"
+            fi
+            i=$((i + 30))
           done
