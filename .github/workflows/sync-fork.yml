@@ -68,25 +68,3 @@ jobs:
             fi
           done
           echo "branches mirrored=${ok} blocked=${blocked}"
-
-      - name: Sync tags
-        continue-on-error: true
-        run: |
-          set -uo pipefail
-          git fetch upstream --tags --prune || true
-          git ls-remote --tags origin | awk '{print $2}' | sed 's#refs/tags/##; s/\^{}$//' | sort -u > /tmp/have.txt
-          git tag | sort -u > /tmp/all.txt
-          comm -23 /tmp/all.txt /tmp/have.txt > /tmp/missing.txt
-          echo "upstream-tags=$(wc -l < /tmp/all.txt) present=$(wc -l < /tmp/have.txt) missing=$(wc -l < /tmp/missing.txt)"
-          mapfile -t miss < /tmp/missing.txt
-          i=0
-          while [ $i -lt ${#miss[@]} ]; do
-            chunk=("${miss[@]:i:30}")
-            refs=()
-            for t in "${chunk[@]}"; do refs+=("refs/tags/${t}"); done
-            if ! git push --quiet origin "${refs[@]}"; then
-              sleep 2
-              git push --quiet origin "${refs[@]}" || echo "chunk at ${i}: still rejected, will retry next run"
-            fi
-            i=$((i + 30))
-          done
