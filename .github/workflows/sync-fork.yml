@@ -13,6 +13,7 @@ concurrency:
 
 env:
   UPSTREAM: "yetone/magpie"
+  BRANCH: "main"
 
 jobs:
   sync:
@@ -23,24 +24,39 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Sync default branch (fast-forward only)
+      - name: Sync default branch
         run: |
           set -euo pipefail
           git remote add upstream "https://github.com/${UPSTREAM}.git"
           git fetch upstream --prune
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git merge-base --is-ancestor "upstream/main" HEAD; then
+
+          if git merge-base --is-ancestor "upstream/${BRANCH}" HEAD; then
             echo "already up to date"
             exit 0
           fi
-          git merge --ff-only "upstream/main"
-          git push origin "HEAD:main"
+
+          if git merge --ff-only "upstream/${BRANCH}"; then
+            echo "fast-forwarded"
+            git push origin "HEAD:${BRANCH}"
+            exit 0
+          fi
+
+          echo "fork is ahead of upstream, replaying local commits on top of upstream"
+          git rebase "upstream/${BRANCH}"
+          git push --force-with-lease origin "HEAD:${BRANCH}"
 
       - name: Sync other branches and tags
         continue-on-error: true
         run: |
           set -uo pipefail
           git fetch upstream '+refs/heads/*:refs/remotes/upstream/*' --prune
-          git push origin 'refs/remotes/upstream/*:refs/heads/*' --prune
-          git push origin --tags
+          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/upstream/); do
+            name="${ref#upstream/}"
+            case "$name" in
+              "$BRANCH"|HEAD) continue ;;
+            esac
+            git push origin "refs/remotes/upstream/${name}:refs/heads/${name}" || echo "skip ${name}"
+          done
+          git push origin --tags || true
